@@ -110,6 +110,7 @@ print("="*60)
 
 kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
+alphas = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
 thresholds = np.arange(0.30, 0.80, 0.05)
 
 pipeline = Pipeline([
@@ -117,24 +118,47 @@ pipeline = Pipeline([
     ("model", CategoricalNB(alpha=1.0, class_prior=[0.80, 0.20]))
 ])
 
-thr_scores = {}
+best_global_f1 = -1
+best_params = {'alpha': 1.0, 'threshold': 0.60}
 
-for thr in thresholds:
-    f1s = []
-    for train_idx, val_idx in kf.split(X_train_full, y_train_full):
-        X_fold_train = X_train_full.iloc[train_idx]
-        X_fold_val = X_train_full.iloc[val_idx]
-        y_fold_train = y_train_full.iloc[train_idx]
-        y_fold_val = y_train_full.iloc[val_idx]
+# Grid Search Manual
 
-        pipeline.fit(X_fold_train, y_fold_train)
-        probs = pipeline.predict_proba(X_fold_val)[:, 1]
-        preds = (probs >= thr).astype(int)
+for alpha in alphas:
+    pipeline.set_params(model__alpha=alpha)
+    
+    thr_scores = {}
+    
+    for thr in thresholds:
+        f1s = []
+        for train_idx, val_idx in kf.split(X_train_full, y_train_full):
+            X_fold_train = X_train_full.iloc[train_idx]
+            X_fold_val = X_train_full.iloc[val_idx]
+            y_fold_train = y_train_full.iloc[train_idx]
+            y_fold_val = y_train_full.iloc[val_idx]
 
-        f1s.append(f1_score(y_fold_val, preds, pos_label=1))
-    thr_scores[thr] = np.mean(f1s)
+            pipeline.fit(X_fold_train, y_fold_train)
+            probs = pipeline.predict_proba(X_fold_val)[:, 1]
+            preds = (probs >= thr).astype(int)
 
-best_threshold = max(thr_scores, key=thr_scores.get)
+            f1s.append(f1_score(y_fold_val, preds, pos_label=1))
+        thr_scores[thr] = np.mean(f1s)
+    
+    current_best_thr = max(thr_scores, key=thr_scores.get)
+    current_best_f1 = thr_scores[current_best_thr]
+    
+    if current_best_f1 > best_global_f1:
+        best_global_f1 = current_best_f1
+        best_params['alpha'] = alpha
+        best_params['threshold'] = current_best_thr
+
+best_alpha = best_params['alpha']
+best_threshold = best_params['threshold']
+
+print(f"Melhores parâmetros encontrados: Alpha={best_alpha}, Threshold={best_threshold:.2f}")
+
+# reconfiguração do pipeline final
+
+pipeline.set_params(model__alpha=best_alpha)
 
 cv_metrics = {
     "accuracy": [],
@@ -162,6 +186,7 @@ print(f"F1-Score Oportunidade (CV):     {np.mean(cv_metrics['f1_pos']):.4f}")
 
 # treinamento e teste final
 
+pipeline.set_params(model__alpha=best_alpha)
 pipeline.fit(X_train_full, y_train_full)
 
 X_test_final_imp = X_test_final.copy()
@@ -203,7 +228,9 @@ plt.show()
 with open("Relatorio_Final.txt", "w", encoding="utf-8") as f:
     f.write("RELATÓRIO DE MODELAGEM - CAR EVALUATION\n")
     f.write("="*60 + "\n")
-    f.write("Técnica: Naive Bayes Categórico + Validação Cruzada Manual\n\n")
+    f.write("Técnica: Naive Bayes Categórico + Validação Cruzada Manual\n")
+    f.write(f"Melhor Hiperparâmetro (Alpha): {best_alpha}\n")
+    f.write(f"Melhor Threshold (Corte): {best_threshold:.2f}\n\n")
 
     f.write("METRICAS DE VALIDAÇÃO CRUZADA (Média 5 Folds):\n")
     f.write(f"- Acurácia: {np.mean(cv_metrics['accuracy']):.2%}\n")
