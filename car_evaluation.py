@@ -3,10 +3,12 @@ import os
 import urllib.request
 import matplotlib.pyplot as plt
 import seaborn as sns
+import numpy as np
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.naive_bayes import CategoricalNB
 from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
@@ -15,7 +17,6 @@ from sklearn.metrics import (
     f1_score
 )
 
-
 # configuração e definição
 
 DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/car/car.data"
@@ -23,15 +24,8 @@ DADOS = "data"
 FILE_PATH = os.path.join(DADOS, "car.data")
 
 COLUMNS = [
-    "buying",
-    "maint",
-    "doors",
-    "persons",
-    "lug_boot",
-    "safety",
-    "class"
+    "buying", "maint", "doors", "persons", "lug_boot", "safety", "class"
 ]
-
 
 # download do dataset
 
@@ -44,8 +38,7 @@ if not os.path.exists(FILE_PATH):
 else:
     print("ARQUIVO JÁ EXISTENTE. CARREGANDO...")
 
-
-# verificação de integridade
+# análise exploratória (EDA)
 
 df = pd.read_csv(FILE_PATH, header=None, names=COLUMNS)
 
@@ -56,38 +49,30 @@ print(f"Dimensão do DataFrame: {df.shape}")
 print(f"Duplicatas encontradas: {df.duplicated().sum()}")
 print(f"Valores nulos totais: {df.isnull().sum().sum()}")
 
-
-# análise exploratória (EDA)
-
-sns.set_style("whitegrid")
-
 plt.figure(figsize=(8, 5))
 ax = sns.countplot(
-    x='class',
+    x="class",
     data=df,
-    order=df['class'].value_counts().index,
-    palette='viridis'
+    order=df["class"].value_counts().index
 )
-plt.title('Distribuição da Variável Alvo')
-plt.xlabel('Classe')
-plt.ylabel('Contagem')
+plt.title("Distribuição das Classes Originais")
+plt.xlabel("Classe")
+plt.ylabel("Contagem")
 
 total = len(df)
 for p in ax.patches:
-    percentage = f'{100 * p.get_height() / total:.1f}%'
+    percentage = f"{100 * p.get_height() / total:.1f}%"
     ax.annotate(
         percentage,
         (p.get_x() + p.get_width() / 2, p.get_height()),
-        ha='center',
-        va='bottom'
+        ha="center",
+        va="bottom"
     )
 
+plt.tight_layout()
 plt.show()
 
-print("Observação: Forte desbalanceamento da classe 'unacc'.")
-
-
-# mapeamento e codificação ordinal
+# preparação dos dados
 
 map_buying_maint = {'low': 0, 'med': 1, 'high': 2, 'vhigh': 3}
 map_doors = {'2': 2, '3': 3, '4': 4, '5more': 5}
@@ -96,7 +81,6 @@ map_lug = {'small': 0, 'med': 1, 'big': 2}
 map_safety = {'low': 0, 'med': 1, 'high': 2}
 
 df_encoded = df.copy()
-
 df_encoded['buying'] = df_encoded['buying'].map(map_buying_maint)
 df_encoded['maint'] = df_encoded['maint'].map(map_buying_maint)
 df_encoded['doors'] = df_encoded['doors'].map(map_doors)
@@ -104,106 +88,101 @@ df_encoded['persons'] = df_encoded['persons'].map(map_persons)
 df_encoded['lug_boot'] = df_encoded['lug_boot'].map(map_lug)
 df_encoded['safety'] = df_encoded['safety'].map(map_safety)
 
-
-# definição do problema em binário
-
 df_focus = df_encoded.copy()
-df_focus['class'] = df_focus['class'].apply(
-    lambda x: 1 if x in ['good', 'vgood'] else 0
-)
+df_focus['class'] = df_focus['class'].apply(lambda x: 1 if x in ['good', 'vgood'] else 0)
 
 X = df_focus.drop('class', axis=1)
 y = df_focus['class']
 
-
-# divisão de treino e teste com 70/30
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.3,
-    random_state=42,
-    stratify=y
+X_train_full, X_test_final, y_train_full, y_test_final = train_test_split(
+    X, y, test_size=0.3, random_state=42, stratify=y
 )
 
 print("\nDivisão realizada com sucesso!")
-print(f"Treino: {X_train.shape[0]} amostras")
-print(f"Teste: {X_test.shape[0]} amostras")
+print(f"Conjunto para Validação Cruzada (Treino): {X_train_full.shape[0]} amostras")
+print(f"Conjunto para Teste Final: {X_test_final.shape[0]} amostras")
 
-
-# imputação
-
-imputer = SimpleImputer(strategy="most_frequent")
-X_train = pd.DataFrame(imputer.fit_transform(X_train), columns=X_train.columns)
-X_test = pd.DataFrame(imputer.transform(X_test), columns=X_test.columns)
-
-
-# treinament do modelo
-
-model = CategoricalNB(
-    alpha=1.0,
-    class_prior=[0.80, 0.20]
-)
-
-model.fit(X_train, y_train)
-
-y_proba = model.predict_proba(X_test)[:, 1]
-
-threshold = 0.60
-y_pred = (y_proba >= threshold).astype(int)
-
-
-# avaliação do modelo
-
-acc = accuracy_score(y_test, y_pred)
-bal_acc = balanced_accuracy_score(y_test, y_pred)
-f1_macro = f1_score(y_test, y_pred, average="macro")
-f1_pos = f1_score(y_test, y_pred, pos_label=1)
+# validação cruzada manual com otimização de threshold 
 
 print("\n" + "="*60)
-print("AVALIAÇÃO DO MODELO (AJUSTADO AO OBJETIVO)")
+print("INICIANDO VALIDAÇÃO CRUZADA ESTRATIFICADA (5 FOLDS)")
 print("="*60)
-print(f"Acurácia: {acc:.4f}")
-print(f"Acurácia Balanceada: {bal_acc:.4f}")
-print(f"F1-score Macro: {f1_macro:.4f}")
-print(f"F1-score (Oportunidades): {f1_pos:.4f}")
 
-print("\nRelatório de Classificação:")
-print(classification_report(y_test, y_pred))
+kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
+thresholds = np.arange(0.30, 0.80, 0.05)
 
-# matriz de confusão
+pipeline = Pipeline([
+    ("imputer", SimpleImputer(strategy="most_frequent")),
+    ("model", CategoricalNB(alpha=1.0, class_prior=[0.80, 0.20]))
+])
 
-cm = confusion_matrix(y_test, y_pred)
+thr_scores = {}
 
-plt.figure(figsize=(7, 6))
-sns.heatmap(
-    cm,
-    annot=True,
-    fmt='d',
-    cmap='Blues',
-    xticklabels=['Não oportunidade', 'Oportunidade'],
-    yticklabels=['Não oportunidade', 'Oportunidade']
-)
-plt.title('Matriz de Confusão - Naive Bayes Ajustado')
-plt.xlabel('Classe Predita')
-plt.ylabel('Classe Real')
-plt.show()
+for thr in thresholds:
+    f1s = []
+    for train_idx, val_idx in kf.split(X_train_full, y_train_full):
+        X_fold_train = X_train_full.iloc[train_idx]
+        X_fold_val = X_train_full.iloc[val_idx]
+        y_fold_train = y_train_full.iloc[train_idx]
+        y_fold_val = y_train_full.iloc[val_idx]
 
+        pipeline.fit(X_fold_train, y_fold_train)
+        probs = pipeline.predict_proba(X_fold_val)[:, 1]
+        preds = (probs >= thr).astype(int)
 
-# avaliação e documentação do modelo
+        f1s.append(f1_score(y_fold_val, preds, pos_label=1))
+    thr_scores[thr] = np.mean(f1s)
+
+best_threshold = max(thr_scores, key=thr_scores.get)
+
+cv_metrics = {
+    "accuracy": [],
+    "balanced_accuracy": [],
+    "f1_pos": []
+}
+
+for train_idx, val_idx in kf.split(X_train_full, y_train_full):
+    X_fold_train = X_train_full.iloc[train_idx]
+    X_fold_val = X_train_full.iloc[val_idx]
+    y_fold_train = y_train_full.iloc[train_idx]
+    y_fold_val = y_train_full.iloc[val_idx]
+
+    pipeline.fit(X_fold_train, y_fold_train)
+    probs = pipeline.predict_proba(X_fold_val)[:, 1]
+    preds = (probs >= best_threshold).astype(int)
+
+    cv_metrics["accuracy"].append(accuracy_score(y_fold_val, preds))
+    cv_metrics["balanced_accuracy"].append(balanced_accuracy_score(y_fold_val, preds))
+    cv_metrics["f1_pos"].append(f1_score(y_fold_val, preds, pos_label=1))
+
+print(f"Acurácia Média (CV):            {np.mean(cv_metrics['accuracy']):.4f} (+/- {np.std(cv_metrics['accuracy']):.4f})")
+print(f"Acurácia Balanceada Média (CV): {np.mean(cv_metrics['balanced_accuracy']):.4f}")
+print(f"F1-Score Oportunidade (CV):     {np.mean(cv_metrics['f1_pos']):.4f}")
+
+# treinamento e teste final
+
+pipeline.fit(X_train_full, y_train_full)
+
+X_test_final_imp = X_test_final.copy()
+probs_final = pipeline.predict_proba(X_test_final_imp)[:, 1]
+preds_final = (probs_final >= best_threshold).astype(int)
+
+acc_final = accuracy_score(y_test_final, preds_final)
+bal_acc_final = balanced_accuracy_score(y_test_final, preds_final)
+f1_final = f1_score(y_test_final, preds_final, pos_label=1)
 
 print("\n" + "="*60)
-print(">>> PARTE 5: GERANDO DOCUMENTAÇÃO <<<")
+print("RESULTADO FINAL NO TESTE (HOLDOUT 30%)")
 print("="*60)
+print(f"Acurácia Final:            {acc_final:.4f}")
+print(f"Acurácia Balanceada Final: {bal_acc_final:.4f}")
+print(f"F1-Score Final:            {f1_final:.4f}")
 
+# documentação e visualização
+
+cm = confusion_matrix(y_test_final, preds_final)
 tn, fp, fn, tp = cm.ravel()
-
-print("\nANÁLISE DE IMPACTO:")
-print(f"- Carros ruins evitados corretamente (TN): {tn}")
-print(f"- Oportunidades identificadas (TP): {tp}")
-print(f"- Risco (Carros ruins recomendados - FP): {fp}")
-print(f"- Oportunidades perdidas (FN): {fn}")
 
 plt.figure(figsize=(7, 6))
 sns.heatmap(
@@ -214,25 +193,29 @@ sns.heatmap(
     xticklabels=['Não Oportunidade', 'Oportunidade'],
     yticklabels=['Não Oportunidade', 'Oportunidade']
 )
-plt.title('Matriz de Confusão Final')
-plt.xlabel('Predição da IA')
-plt.ylabel('Classe Real')
+plt.title('Matriz de Confusão Final (Teste)')
+plt.ylabel('Real')
+plt.xlabel('Predito')
 plt.tight_layout()
-plt.savefig("Matriz_Confusao.png")
-plt.close()
+plt.savefig("Matriz_Confusao_Final.png")
+plt.show()
 
 with open("Relatorio_Final.txt", "w", encoding="utf-8") as f:
-    f.write("RELATÓRIO FINAL\n")
-    f.write("="*60 + "\n\n")
-    f.write(f"Acurácia: {acc:.2%}\n")
-    f.write(f"Acurácia Balanceada: {bal_acc:.2%}\n")
-    f.write(f"F1-score (Oportunidades): {f1_pos:.2%}\n\n")
-    f.write("RELATÓRIO DE CLASSIFICAÇÃO:\n")
-    f.write(classification_report(y_test, y_pred))
-    f.write("\nANÁLISE DE IMPACTO:\n")
-    f.write(f"TN: {tn}\nTP: {tp}\nFP: {fp}\nFN: {fn}\n")
+    f.write("RELATÓRIO DE MODELAGEM - CAR EVALUATION\n")
+    f.write("="*60 + "\n")
+    f.write("Técnica: Naive Bayes Categórico + Validação Cruzada Manual\n\n")
 
-print("\n[SUCESSO]")
-print("Arquivos gerados:")
-print("- Relatorio_Final.txt")
-print("- Matriz_Confusao.png")
+    f.write("METRICAS DE VALIDAÇÃO CRUZADA (Média 5 Folds):\n")
+    f.write(f"- Acurácia: {np.mean(cv_metrics['accuracy']):.2%}\n")
+    f.write(f"- Acurácia Balanceada: {np.mean(cv_metrics['balanced_accuracy']):.2%}\n")
+    f.write(f"- F1-Score: {np.mean(cv_metrics['f1_pos']):.2%}\n\n")
+
+    f.write("METRICAS DE TESTE FINAL (30% Isolado):\n")
+    f.write(f"- Acurácia: {acc_final:.2%}\n")
+    f.write(f"- Acurácia Balanceada: {bal_acc_final:.2%}\n")
+    f.write(f"- F1-Score: {f1_final:.2%}\n\n")
+
+    f.write("MATRIZ DE CONFUSÃO (TESTE):\n")
+    f.write(f"- TN: {tn}\n- TP: {tp}\n- FP: {fp}\n- FN: {fn}\n")
+
+print("\n[SUCESSO] Relatório e Imagem gerados.")
