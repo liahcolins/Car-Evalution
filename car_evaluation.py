@@ -189,8 +189,7 @@ print(f"F1-Score Oportunidade (CV):     {np.mean(cv_metrics['f1_pos']):.4f}")
 pipeline.set_params(model__alpha=best_alpha)
 pipeline.fit(X_train_full, y_train_full)
 
-X_test_final_imp = X_test_final.copy()
-probs_final = pipeline.predict_proba(X_test_final_imp)[:, 1]
+probs_final = pipeline.predict_proba(X_test_final)[:, 1]
 preds_final = (probs_final >= best_threshold).astype(int)
 
 acc_final = accuracy_score(y_test_final, preds_final)
@@ -222,7 +221,7 @@ plt.title('Matriz de Confusão Final (Teste)')
 plt.ylabel('Real')
 plt.xlabel('Predito')
 plt.tight_layout()
-plt.savefig("Matriz_Confusao_Final.png")
+plt.savefig("Matriz_Confusao_Teste.png")
 plt.show()
 
 with open("Relatorio_Final.txt", "w", encoding="utf-8") as f:
@@ -244,5 +243,81 @@ with open("Relatorio_Final.txt", "w", encoding="utf-8") as f:
 
     f.write("MATRIZ DE CONFUSÃO (TESTE):\n")
     f.write(f"- TN: {tn}\n- TP: {tp}\n- FP: {fp}\n- FN: {fn}\n")
+
+# avaliação com dados externos (excel)
+
+print("\n" + "="*60)
+print("AVALIAÇÃO COM DADOS EXTERNOS (CONCESSIONÁRIA)")
+print("="*60)
+
+df_ext = pd.read_excel("carros_externos.xlsx")
+
+df_ext_encoded = df_ext.copy()
+df_ext_encoded['buying'] = df_ext_encoded['buying'].map(map_buying_maint)
+df_ext_encoded['maint'] = df_ext_encoded['maint'].map(map_buying_maint)
+df_ext_encoded['doors'] = df_ext_encoded['doors'].map(map_doors)
+df_ext_encoded['persons'] = df_ext_encoded['persons'].map(map_persons)
+df_ext_encoded['lug_boot'] = df_ext_encoded['lug_boot'].map(map_lug)
+df_ext_encoded['safety'] = df_ext_encoded['safety'].map(map_safety)
+
+X_ext = df_ext_encoded.drop(columns=["MODELO", "class_real"])
+y_ext_real = df_ext_encoded["class_real"]
+
+probs_ext = pipeline.predict_proba(X_ext)[:, 1]
+preds_ext = (probs_ext >= best_threshold).astype(int)
+
+cm_ext = confusion_matrix(y_ext_real, preds_ext)
+tn_e, fp_e, fn_e, tp_e = cm_ext.ravel()
+
+# métricas dados externos
+
+acc_ext = accuracy_score(y_ext_real, preds_ext)
+bal_acc_ext = balanced_accuracy_score(y_ext_real, preds_ext)
+f1_ext = f1_score(y_ext_real, preds_ext, pos_label=1)
+
+print("\nMétricas dos dados externos:")
+print(f"Acurácia:            {acc_ext:.4f}")
+print(f"Acurácia Balanceada: {bal_acc_ext:.4f}")
+print(f"F1-Score:            {f1_ext:.4f}")
+
+# matriz de confusão dados externos
+
+plt.figure(figsize=(7, 6))
+sns.heatmap(
+    cm_ext,
+    annot=True,
+    fmt='d',
+    cmap='Blues',
+    xticklabels=['Não Oportunidade', 'Oportunidade'],
+    yticklabels=['Não Oportunidade', 'Oportunidade']
+)
+plt.title('Matriz de Confusão - Dados Externos (Concessionária)')
+plt.ylabel('Classe Real')
+plt.xlabel('Classe Predita')
+plt.tight_layout()
+plt.savefig("Matriz_Confusao_Dados_Externos.png")
+plt.show()
+
+print("\nResultado carro a carro:")
+for i, row in df_ext.iterrows():
+    resultado = "OPORTUNIDADE" if preds_ext[i] == 1 else "NÃO OPORTUNIDADE"
+    print(f"- {row['MODELO']}: {resultado}")
+
+with open("Relatorio_Final.txt", "a", encoding="utf-8") as f:
+    f.write("\n" + "="*60 + "\n")
+    f.write("AVALIAÇÃO COM DADOS EXTERNOS (CONCESSIONÁRIA)\n")
+    f.write("="*60 + "\n")
+
+    for i, row in df_ext.iterrows():
+        resultado = "OPORTUNIDADE" if preds_ext[i] == 1 else "NÃO OPORTUNIDADE"
+        f.write(f"- {row['MODELO']}: {resultado}\n")
+
+    f.write("\nMETRICAS (DADOS EXTERNOS):\n")
+    f.write(f"- Acurácia: {acc_ext:.2%}\n")
+    f.write(f"- Acurácia Balanceada: {bal_acc_ext:.2%}\n")
+    f.write(f"- F1-Score: {f1_ext:.2%}\n")
+
+    f.write("\nMATRIZ DE CONFUSÃO (DADOS EXTERNOS):\n")
+    f.write(f"- TN: {tn_e}\n- TP: {tp_e}\n- FP: {fp_e}\n- FN: {fn_e}\n")
 
 print("\n[SUCESSO] Relatório e Imagem gerados.")
